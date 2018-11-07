@@ -72,6 +72,11 @@ def find_feat_part(artist, albumartist):
 
     return None
 
+def find_feat_part_singleton(artist):
+    lhs, rhs = split_on_feat(artist)
+    if lhs and rhs:
+        return (lhs, rhs)
+    return (None, None)
 
 class FtInTitlePlugin(plugins.BeetsPlugin):
     def __init__(self):
@@ -120,6 +125,24 @@ class FtInTitlePlugin(plugins.BeetsPlugin):
             self.ft_in_title(item, drop_feat)
             item.store()
 
+    def update_metadata_singleton(self, item, artist_part, feat_part, drop_feat):
+        # In all cases, update the artist field.
+        self._log.info(u'artist: {0} -> {1}', item.artist, artist_part)
+        item.artist = artist_part
+        
+        if item.artist_sort:
+            # Just strip the featured artist from the sort name.
+            item.artist_sort, _ = split_on_feat(item.artist_sort)
+
+        # Only update the title if it does not already contain a featured
+        # artist and if we do not drop featuring information.
+        if not drop_feat and not contains_feat(item.title):
+            feat_format = self.config['format'].as_str()
+            new_format = feat_format.format(feat_part)
+            new_title = u"{0} {1}".format(item.title, new_format)
+            self._log.info(u'title: {0} -> {1}', item.title, new_title)
+            item.title = new_title
+
     def update_metadata(self, item, feat_part, drop_feat):
         """Choose how to add new artists to the title and set the new
         metadata. Also, print out messages about any changes that are made.
@@ -153,10 +176,26 @@ class FtInTitlePlugin(plugins.BeetsPlugin):
         # artist field does not exactly match the album artist field. In
         # that case, we attempt to move the featured artist to the title.
         _, featured = split_on_feat(artist)
-        if featured and albumartist != artist and albumartist:
-            self._log.info('{}', displayable_path(item.path))
+        if not featured:
+            self._log.info(u'no featuring artists found')
+            return
 
-            feat_part = None
+        singleton = item.get_album() is None
+                
+        if singleton:
+            self._log.info('singleton {}', displayable_path(item.path))
+
+            # Attempt to find the featured artist.
+            (artist_part, feat_part) = find_feat_part_singleton(artist)
+
+            # If we have a featuring artist, move it to the title.
+            if feat_part:
+                self.update_metadata_singleton(item, artist_part, feat_part, drop_feat)
+            else:
+                self._log.info(u'no featuring artists found in this singleton')
+
+        elif albumartist != artist and albumartist:
+            self._log.info('album track {}', displayable_path(item.path))
 
             # Attempt to find the featured artist.
             feat_part = find_feat_part(artist, albumartist)
